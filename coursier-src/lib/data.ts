@@ -1,4 +1,5 @@
 import { Restaurant } from './types';
+import { fetchRestaurants } from './api';
 
 export const QUARTIERS = [
   'Glass',
@@ -15,7 +16,35 @@ export const QUARTIERS = [
   'Charbonnages',
 ];
 
-export const RESTAURANTS: Restaurant[] = [
+// ─── Restaurants & menus ────────────────────────────────────────────
+// Source de vérité : Supabase (table restaurants + menu_items).
+// RESTAURANTS reste un tableau MUTABLE (référence stable) pour ne pas
+// casser les écrans qui font RESTAURANTS.find(...) / .map(...) : on le
+// vide et le remplit en place une fois le fetch Supabase terminé.
+// FALLBACK_RESTAURANTS ci-dessous sert uniquement si l'appareil est hors
+// ligne au démarrage (données de secours, jamais modifiées).
+export const RESTAURANTS: Restaurant[] = [];
+
+export let restaurantsReady = false;
+
+export async function loadRestaurantsFromSupabase(): Promise<boolean> {
+  const res = await fetchRestaurants();
+  if (res.ok && res.data.length > 0) {
+    RESTAURANTS.length = 0;
+    RESTAURANTS.push(...res.data);
+    restaurantsReady = true;
+    return true;
+  }
+  // Hors ligne / erreur réseau : on garde l'app utilisable avec les
+  // données de secours plutôt que d'afficher un écran vide.
+  if (RESTAURANTS.length === 0) {
+    RESTAURANTS.push(...FALLBACK_RESTAURANTS);
+  }
+  restaurantsReady = true;
+  return false;
+}
+
+const FALLBACK_RESTAURANTS: Restaurant[] = [
   {
     id: 'r1',
     name: 'Chez Maman Nyembwé',
@@ -136,7 +165,7 @@ export const RESTAURANTS: Restaurant[] = [
   },
 ];
 
-export const EXTRA_RESTAURANTS: Restaurant[] = [
+const FALLBACK_EXTRA_RESTAURANTS: Restaurant[] = [
   {
     id: 'r7',
     name: 'Le Palmier d’Or',
@@ -179,7 +208,7 @@ export const EXTRA_RESTAURANTS: Restaurant[] = [
   },
 ];
 
-RESTAURANTS.push(...EXTRA_RESTAURANTS);
+FALLBACK_RESTAURANTS.push(...FALLBACK_EXTRA_RESTAURANTS);
 
 export const COURSE_TYPES = [
   { id: 'achats', label: 'Achats en boutique', emoji: '🛍️', desc: 'Vêtements, électronique, pharmacie…' },

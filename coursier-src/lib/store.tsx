@@ -2,7 +2,13 @@ import React, { createContext, useContext, useEffect, useMemo, useState } from '
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { CartLine, ChatMessage, MenuItem, Order, Restaurant } from './types';
 import { courierForOrder, courierReply, greetingFor } from './chat';
-import { RESTAURANTS } from './data';
+import { RESTAURANTS, loadRestaurantsFromSupabase } from './data';
+import {
+  upsertMenuItemRemote,
+  deleteMenuItemRemote,
+  toggleItemAvailableRemote,
+  setPromoRemote,
+} from './api';
 
 // ─── Gestion des menus par les restaurants ───────────────────────────
 // menuOverrides[restaurantId] contient le menu édité par le restaurant
@@ -94,6 +100,8 @@ type Store = {
   deleteMenuItem: (restaurantId: string, itemId: string) => void;
   toggleItemAvailable: (restaurantId: string, itemId: string) => void;
   setPromo: (restaurantId: string, itemId: string, promoPrice: number | null) => { ok: boolean; error?: string };
+  // Incrémente à chaque (re)chargement des restaurants depuis Supabase.
+  restaurantsVersion: number;
 };
 
 const Ctx = createContext<Store | null>(null);
@@ -116,6 +124,15 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   const [onboarded, setOnboarded] = useState(true); // évite le flash pendant le chargement
   const [menuOverrides, setMenuOverrides] = useState<MenuOverrides>({});
   const [loaded, setLoaded] = useState(false);
+  // Incrémenté quand RESTAURANTS est rempli depuis Supabase, pour forcer
+  // le re-rendu des écrans qui consomment useStore() (voir lib/data.ts).
+  const [restaurantsVersion, setRestaurantsVersion] = useState(0);
+
+  useEffect(() => {
+    loadRestaurantsFromSupabase()
+      .catch(() => false)
+      .finally(() => setRestaurantsVersion((v) => v + 1));
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -411,6 +428,13 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       available: item.available !== false,
       photo: item.photo || null,
     };
+    // Écriture Supabase en arrière-plan (source de vérité durable).
+    // L'UI se met à jour immédiatement via menuOverrides ci-dessous, sans
+    // attendre la réponse réseau ; en cas d'échec l'erreur est journalisée
+    // mais ne bloque pas l'expérience restaurant (retry manuel possible).
+    upsertMenuItemRemote(restaurantId, clean).then((r) => {
+      if (!r.ok) console.warn('[menu] échec sync Supabase:', r.error);
+    });
     setMenuOverrides((prev) => {
       const current = menuFor(restaurantId, prev);
       const exists = current.some((m) => m.id === clean.id);
@@ -423,6 +447,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteMenuItem = (restaurantId: string, itemId: string) => {
+    deleteMenuItemRemote(itemId).then((r) => {
+      if (!r.ok) console.warn('[menu] échec suppression Supabase:', r.error);
+    });
     setMenuOverrides((prev) => {
       const current = menuFor(restaurantId, prev);
       return { ...prev, [restaurantId]: current.filter((m) => m.id !== itemId) };
@@ -430,13 +457,17 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
   };
 
   const toggleItemAvailable = (restaurantId: string, itemId: string) => {
+    const current = menuFor(restaurantId, menuOverrides);
+    const item = current.find((m) => m.id === itemId);
+    const nextAvailable = item?.available === false ? true : false;
+    toggleItemAvailableRemote(itemId, nextAvailable).then((r) => {
+      if (!r.ok) console.warn('[menu] échec disponibilité Supabase:', r.error);
+    });
     setMenuOverrides((prev) => {
-      const current = menuFor(restaurantId, prev);
+      const cur = menuFor(restaurantId, prev);
       return {
         ...prev,
-        [restaurantId]: current.map((m) =>
-          m.id === itemId ? { ...m, available: m.available === false ? true : false } : m
-        ),
+        [restaurantId]: cur.map((m) => (m.id === itemId ? { ...m, available: nextAvailable } : m)),
       };
     });
   };
@@ -449,6 +480,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       const check = validateMenuItem({ ...item, promoPrice });
       if (!check.ok) return check;
     }
+    setPromoRemote(itemId, promoPrice ?? null).then((r) => {
+      if (!r.ok) console.warn('[menu] échec promo Supabase:', r.error);
+    });
     setMenuOverrides((prev) => {
       const cur = menuFor(restaurantId, prev);
       return {
@@ -467,8 +501,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
       userName, setUserName, phone, setPhone, defaultQuartier, setDefaultQuartier,
       onboarded, completeOnboarding, eraseAllData,
       menuOverrides, getMenu, upsertMenuItem, deleteMenuItem, toggleItemAvailable, setPromo,
+      restaurantsVersion,
     }),
-    [cart, cartRestaurant, orders, chats, favorites, userName, phone, defaultQuartier, onboarded, menuOverrides]
+    [cart, cartRestaurant, orders, chats, favorites, userName, phone, defaultQuartier, onboarded, menuOverrides, restaurantsVersion]
   );
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
