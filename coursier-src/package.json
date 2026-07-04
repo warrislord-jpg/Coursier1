@@ -37,7 +37,12 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "build:client": "node scripts/build-web.js client",
+    "build:restaurant": "node scripts/build-web.js restaurant",
+    "build:courier": "node scripts/build-web.js courier",
+    "build:admin": "node scripts/build-web.js admin",
+    "build:all": "npm run build:client && npm run build:restaurant && npm run build:courier && npm run build:admin"
   },
   "private": true
 }
